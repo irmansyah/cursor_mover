@@ -1,0 +1,133 @@
+extern crate sdl2;
+extern crate x11rb;
+
+use sdl2::pixels::Color;
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
+use std::io::{self, Write};
+use x11rb::connection::Connection;
+use x11rb::protocol::xproto::{WarpPointerRequest, Window};
+
+const GRID_LABELS: [[&str; 13]; 13] = [
+    ["aa", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai", "aj", "ak", "al", "am"],
+    ["ba", "bb", "bc", "bd", "be", "bf", "bg", "bh", "bi", "bj", "bk", "bl", "bm"],
+    ["ca", "cb", "cc", "cd", "ce", "cf", "cg", "ch", "ci", "cj", "ck", "cl", "cm"],
+    ["da", "db", "dc", "dd", "de", "df", "dg", "dh", "di", "dj", "dk", "dl", "dm"],
+    ["ea", "eb", "ec", "ed", "ee", "ef", "eg", "eh", "ei", "ej", "ek", "el", "em"],
+    ["fa", "fb", "fc", "fd", "fe", "ff", "fg", "fh", "fi", "fj", "fk", "fl", "fm"],
+    ["ga", "gb", "gc", "gd", "ge", "gf", "gg", "gh", "gi", "gj", "gk", "gl", "gm"],
+    ["ha", "hb", "hc", "hd", "he", "hf", "hg", "hh", "hi", "hj", "hk", "hl", "hm"],
+    ["ia", "ib", "ic", "id", "ie", "if", "ig", "ih", "ii", "ij", "ik", "il", "im"],
+    ["ja", "jb", "jc", "jd", "je", "jf", "jg", "jh", "ji", "jj", "jk", "jl", "jm"],
+    ["ka", "kb", "kc", "kd", "ke", "kf", "kg", "kh", "ki", "kj", "kk", "kl", "km"],
+    ["la", "lb", "lc", "ld", "le", "lf", "lg", "lh", "li", "lj", "lk", "ll", "lm"],
+    ["ma", "mb", "mc", "md", "me", "mf", "mg", "mh", "mi", "mj", "mk", "ml", "mm"],
+];
+
+fn move_cursor_to_grid(key: &str, screen_width: u32, screen_height: u32) {
+    let cols = GRID_LABELS[0].len();
+    let rows = GRID_LABELS.len();
+
+    let cell_width = screen_width / cols as u32;
+    let cell_height = screen_height / rows as u32;
+
+    for (row, row_labels) in GRID_LABELS.iter().enumerate() {
+        for (col, &label) in row_labels.iter().enumerate() {
+            if label == key {
+                // Calculate target screen coordinates
+                let target_x = (col as u32) * cell_width + cell_width / 2;
+                let target_y = (row as u32) * cell_height + cell_height / 2;
+
+                // Move the cursor using X11 (Linux-only)
+                if let Ok((conn, screen_num)) = x11rb::connect(None) {
+                    let screen = &conn.setup().roots[screen_num];
+                    conn.send_request(&WarpPointerRequest {
+                        src_window: Window::NONE,
+                        dst_window: screen.root,
+                        src_x: 0.0,
+                        src_y: 0.0,
+                        src_width: 0,
+                        src_height: 0,
+                        dst_x: target_x as i16,
+                        dst_y: target_y as i16,
+                    }).unwrap();
+                    conn.flush().unwrap();
+                } else {
+                    println!("Failed to connect to X server to move the cursor.");
+                }
+                return;
+            }
+        }
+    }
+
+    println!("No matching grid key found for '{}'", key);
+}
+
+fn main() {
+    let sdl_context = sdl2::init().unwrap();
+    let video_subsystem = sdl_context.video().unwrap();
+
+    let screen_width = 2560; // Example screen dimensions
+    let screen_height = 1440;
+
+    let window = video_subsystem
+        .window("Overlay", screen_width, screen_height)
+        .position_centered()
+        .opengl()
+        .borderless()
+        .build()
+        .unwrap();
+
+    let mut canvas = window.into_canvas().build().unwrap();
+
+    let mut event_pump = sdl_context.event_pump().unwrap();
+
+    canvas.set_draw_color(Color::RGBA(0, 0, 0, 128)); // Semi-transparent black
+    canvas.clear();
+
+    // Draw grid
+    let cols = 13;
+    let rows = 13;
+    let cell_width = screen_width / cols;
+    let cell_height = screen_height / rows;
+
+    for row in 0..rows {
+        for col in 0..cols {
+            let x = col * cell_width;
+            let y = row * cell_height;
+
+            canvas.set_draw_color(Color::RGBA(255, 255, 255, 255));
+            canvas
+                .draw_rect(sdl2::rect::Rect::new(
+                    x as i32,
+                    y as i32,
+                    cell_width,
+                    cell_height,
+                ))
+                .unwrap();
+
+            // Draw grid labels
+            let label = GRID_LABELS[row][col];
+            println!("Label: {} (row: {}, col: {})", label, row, col);
+        }
+    }
+
+    canvas.present();
+
+    println!("Enter grid key to move the cursor (e.g., 'aa', 'ab'):");
+
+    let mut input = String::new();
+    loop {
+        io::stdout().flush().unwrap();
+        input.clear();
+        io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
+
+        if input.is_empty() || input == "exit" {
+            println!("Exiting...");
+            break;
+        }
+
+        move_cursor_to_grid(input, screen_width, screen_height);
+    }
+}
